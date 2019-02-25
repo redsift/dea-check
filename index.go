@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path"
 	"sync/atomic"
 	"unsafe"
 
@@ -40,7 +42,7 @@ func (i *Index) HasDomain(source, domain string) bool {
 	return found
 }
 
-// Key produces []byte sequence of key from the string s
+// key produces []byte sequence of key from the string s
 func key(s string) []byte {
 	b := []byte(s)
 	l := len(b)
@@ -50,13 +52,52 @@ func key(s string) []byte {
 	return b
 }
 
-// DownloadAndUpdate makes a GET HTTP request to given url string, then uses response body to update the source
-func (i *Index) DownloadAndUpdate(source string, url string) error {
+// ReadAndUpdate opens given JSON file and updates the source from it.
+func (i *Index) ReadAndUpdate(source, file string) error {
+	r, err := os.Open(file)
+	if err != nil {
+		return errors.WithMessagef(err, `couldn't read data for "%s" from file "%s"`, source, file)
+	}
+	defer func() {
+		_ = r.Close()
+	}()
+	return i.UpdateFromJSON(source, r)
+}
+
+// GetSaveAndUpdate makes a GET HTTP request to given url string, then uses response body to update the source.
+// Additionally, it writes response body to the file.
+func (i *Index) GetSaveAndUpdate(source, file, url string) error {
 	resp, err := http.Get(url)
 	if err != nil {
 		return errors.WithMessagef(err, `couldn't download data for "%s" from "%s"`, source, url)
 	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
+	_ = os.MkdirAll(path.Dir(file), 0755)
+
+	w, err := os.OpenFile(file, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return errors.WithMessagef(err, `couldn't create file "%s"`, file)
+	}
+
+	updateErr := i.UpdateFromJSON(source, io.TeeReader(resp.Body, w))
+
+	_ = w.Sync()
+	if err := w.Close(); err != nil && updateErr == nil {
+		return errors.WithMessagef(err, `couldn't close file "%s"`, file)
+	}
+
+	return updateErr
+}
+
+// GetAndUpdate makes a GET HTTP request to given url string, then uses response body to update the source
+func (i *Index) GetAndUpdate(source, url string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return errors.WithMessagef(err, `couldn't download data for "%s" from "%s"`, source, url)
+	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
@@ -64,7 +105,8 @@ func (i *Index) DownloadAndUpdate(source string, url string) error {
 }
 
 // UpdateFromJSON updates given source from the io.Reader r.
-// Any update happen atomically
+// It assumes incoming JSON is an array of strings.
+// The update happen atomically.
 func (i *Index) UpdateFromJSON(source string, r io.Reader) error {
 	if _, found := i.forest[source]; !found {
 		return errors.Errorf(`undefined source "%s"`, source)

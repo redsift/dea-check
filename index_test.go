@@ -36,13 +36,43 @@ func TestIndex_Update(t *testing.T) {
 	}
 }
 
+func TestIndex_GetSaveAndUpdate(t *testing.T) {
+	idx := deacheck.NewIndex("dea")
+
+	if found := idx.HasDomain("dea", "sharklasers.com"); found {
+		t.Errorf("HasDomain() return %t, want %t", found, !found)
+	}
+
+	const filename = "_samples/_TestIndex_GetSaveAndUpdate.json"
+
+	if _, err := os.Stat(filename); !os.IsNotExist(err) {
+		if err := os.Remove(filename); err != nil {
+			t.Fatalf("can't remove %q: %v", filename, err)
+		}
+	}
+
+	err := idx.GetSaveAndUpdate("dea", filename, "https://raw.githubusercontent.com/ivolo/disposable-email-domains/master/index.json")
+	if err != nil {
+		t.Errorf("GetSaveAndUpdate() err=%v, want=%v", err, nil)
+	}
+
+	if found := idx.HasDomain("dea", "sharklasers.com"); !found {
+		t.Errorf("HasDomain() return %t, want %t", found, !found)
+	}
+
+	if _, err := os.Stat(filename); err != nil {
+		t.Errorf("os.Stat() err=%v, want=%v", err, nil)
+	}
+
+	_ = os.Remove(filename)
+}
+
 const (
 	deaFile      = "_samples/dea-20190222T1739.json"
 	wildcardFile = "_samples/wildcard-20190222T1739.json"
 )
 
 func BenchmarkIndex_Update(b *testing.B) {
-
 	dea, err := os.Open(deaFile)
 	if err != nil {
 		b.Fatalf(`couldn't open "%s": %v`, deaFile, err)
@@ -79,16 +109,8 @@ func BenchmarkIndex_Update(b *testing.B) {
 }
 
 func BenchmarkIndex_HasDomain(b *testing.B) {
-	dea, err := os.Open(deaFile)
-	if err != nil {
-		b.Fatalf(`couldn't open "%s": %v`, deaFile, err)
-	}
-	defer func() {
-		_ = dea.Close()
-	}()
-
 	idx := deacheck.NewIndex("dea")
-	if err := idx.UpdateFromJSON("dea", bufio.NewReader(dea)); err != nil {
+	if err := idx.ReadAndUpdate("dea", deaFile); err != nil {
 		b.Fatalf(`couldn't update index from "%s": %v`, deaFile, err)
 	}
 
